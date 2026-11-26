@@ -16,12 +16,12 @@ import { SectionViews } from './components/SectionViews';
 import {
   DEFAULT_CONFIG,
   SECTION_NAV,
-  buildAllInOneInstaller,
+  buildInteractiveSetupScript,
 } from './data/novaBlueprint';
 import { NovaDeployConfig, SectionId } from './types/nova';
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState<SectionId>('01-soul');
+  const [activeSection, setActiveSection] = useState<SectionId>('00-guia-consola');
   const [config, setConfig] = useState<NovaDeployConfig>(DEFAULT_CONFIG);
   const [showConfigPanel, setShowConfigPanel] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
@@ -42,7 +42,7 @@ export default function App() {
   const nextSection =
     currentIndex < SECTION_NAV.length - 1 ? SECTION_NAV[currentIndex + 1] : null;
 
-  const installerScript = useMemo(() => buildAllInOneInstaller(config), [config]);
+  const setupWizardScript = useMemo(() => buildInteractiveSetupScript(config), [config]);
 
   const selectSection = (id: SectionId) => {
     setActiveSection(id);
@@ -69,7 +69,7 @@ export default function App() {
                 href="#top"
                 onClick={(e) => {
                   e.preventDefault();
-                  selectSection('01-soul');
+                  selectSection('00-guia-consola');
                 }}
                 className="text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0"
               >
@@ -81,6 +81,15 @@ export default function App() {
               aria-label="Navegación rápida"
               className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600 dark:text-slate-400"
             >
+              <button
+                type="button"
+                onClick={() => selectSection('00-guia-consola')}
+                className={`hover:text-slate-900 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeSection === '00-guia-consola' ? 'text-slate-900 dark:text-slate-100 underline underline-offset-4' : ''
+                }`}
+              >
+                Guía Consola
+              </button>
               <button
                 type="button"
                 onClick={() => selectSection('01-soul')}
@@ -98,15 +107,6 @@ export default function App() {
                 }`}
               >
                 Memoria
-              </button>
-              <button
-                type="button"
-                onClick={() => selectSection('07-telegram')}
-                className={`hover:text-slate-900 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeSection === '07-telegram' ? 'text-slate-900 dark:text-slate-100 underline underline-offset-4' : ''
-                }`}
-              >
-                Telegram
               </button>
               <button
                 type="button"
@@ -131,11 +131,11 @@ export default function App() {
             <div className="shrink-0">
               <button
                 type="button"
-                onClick={() => downloadTextFile('install-nova-plugged.sh', installerScript)}
+                onClick={() => downloadTextFile('setup-nova.sh', setupWizardScript)}
                 className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-500"
               >
                 <Download className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Descargar Pack</span>
+                <span>Descargar setup-nova.sh</span>
               </button>
             </div>
           </div>

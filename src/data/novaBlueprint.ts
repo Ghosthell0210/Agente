@@ -22,6 +22,13 @@ export const DEFAULT_CONFIG: NovaDeployConfig = {
 
 export const SECTION_NAV: SectionNavItem[] = [
   {
+    id: '00-guia-consola',
+    index: '00',
+    title: 'Guía Automática en Consola',
+    shortTitle: 'Guía Consola',
+    subtitle: 'Instalador interactivo autodetectable (setup-nova.sh): detecta entorno/RAM, pide token e ID y arranca Nova 24/7.',
+  },
+  {
     id: '01-soul',
     index: '01',
     title: 'Archivo Soul Completo',
@@ -375,6 +382,7 @@ set -euo pipefail
 # ==========================================================
 export HOME="${root}"
 export TOTA_HOME="${totaHome}"
+export PATH="${root}/ollama/bin:${root}/.tota/runtime/node_modules/.bin:$PATH"
 export OLLAMA_HOST="127.0.0.1:11434"
 export OLLAMA_MODELS="${root}/ollama/models"
 export OLLAMA_NUM_PARALLEL="1"
@@ -663,11 +671,280 @@ echo "3) En Plugged Host ejecuta npm start o bash $ROOT/start-nova.sh"
 `;
 }
 
+export function buildInteractiveSetupScript(cfg: NovaDeployConfig): string {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+
+# ==============================================================================
+# Nova — Instalador Interactivo Autodetectable para Plugged Host
+# Stack: tota-agent + Ollama (${cfg.ollamaModel}) + Playwright + Telegram
+# ==============================================================================
+
+echo ""
+echo "=================================================="
+echo "  Nova — Asistente de Despliegue 24/7 (Plugged Host)"
+echo "=================================================="
+echo ""
+
+# 1. Autodeteccion de rutas y entorno (Contenedor Plugged Host vs VPS)
+if [ -d "/home/container" ] && [ -w "/home/container" ]; then
+  ROOT="/home/container"
+  ENV_TYPE="Contenedor Plugged Host"
+else
+  ROOT="$(pwd)"
+  ENV_TYPE="Servidor Linux / VPS"
+fi
+TOTA_HOME="$ROOT/.tota"
+
+if [ "$(id -u)" -eq 0 ]; then
+  HAS_SUDO=1
+  PRIV_MODE="root"
+elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+  HAS_SUDO=1
+  PRIV_MODE="sudo"
+else
+  HAS_SUDO=0
+  PRIV_MODE="usuario sin privilegios (modo portable)"
+fi
+
+RAW_ARCH="$(uname -m)"
+case "$RAW_ARCH" in
+  x86_64|amd64) ARCH="amd64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  *)
+    echo "[Error] Arquitectura no soportada: $RAW_ARCH"
+    exit 1
+    ;;
+esac
+
+if [ -r /proc/meminfo ]; then
+  TOTAL_RAM_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
+else
+  TOTAL_RAM_MB=8192
+fi
+
+if [ "$TOTAL_RAM_MB" -le 9500 ]; then
+  AUTO_CTX=4096
+elif [ "$TOTAL_RAM_MB" -le 14500 ]; then
+  AUTO_CTX=8192
+else
+  AUTO_CTX=16384
+fi
+
+FREE_DISK_MB="$(df -Pm "$ROOT" | awk 'NR==2 {print $4}')"
+
+echo "[Detectado] Entorno      : $ENV_TYPE ($PRIV_MODE)"
+echo "[Detectado] Ruta base    : $ROOT"
+echo "[Detectado] Arquitectura : linux/$ARCH"
+echo "[Detectado] RAM total    : \${TOTAL_RAM_MB} MB -> num_ctx=\$AUTO_CTX"
+echo "[Detectado] Disco libre  : \${FREE_DISK_MB} MB"
+echo ""
+
+if [ "$TOTAL_RAM_MB" -lt 7200 ]; then
+  echo "[Aviso] Tienes menos de 7.2 GB de RAM. ${cfg.ollamaModel} + Chromium pueden quedarse justos."
+  echo "        Si ves cortes OOM, sube la RAM del nodo o usa un modelo mas ligero (ej. qwen2.5:3b)."
+  echo ""
+fi
+
+if [ "$FREE_DISK_MB" -lt 8500 ]; then
+  echo "[Aviso] Disco libre menor a 8.5 GB (\${FREE_DISK_MB} MB). Descargar Ollama + modelo + Chromium requiere ~7 GB."
+  echo ""
+fi
+
+# 2. Preguntas interactivas en consola
+read -r -p "1) Tu nombre o apodo [${cfg.ownerName}]: " INPUT_OWNER
+OWNER_NAME="\${INPUT_OWNER:-${cfg.ownerName}}"
+
+while true; do
+  read -r -p "2) Token de tu bot (@BotFather): " INPUT_TOKEN
+  if [[ "$INPUT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{20,}$ ]]; then
+    TELEGRAM_TOKEN="$INPUT_TOKEN"
+    break
+  fi
+  echo "   Token invalido. Debe verse como 123456789:ABCdef... Intenta otra vez."
+done
+
+while true; do
+  read -r -p "3) Tu Telegram User ID numerico (@userinfobot) [${cfg.telegramUserId}]: " INPUT_UID
+  TELEGRAM_UID="\${INPUT_UID:-${cfg.telegramUserId}}"
+  if [[ "$TELEGRAM_UID" =~ ^[0-9]+$ ]]; then
+    break
+  fi
+  echo "   El User ID debe contener solo numeros."
+done
+
+read -r -p "4) ¿Configurar credenciales de BD Plugged Host ahora? (s/N) [N]: " INPUT_DB
+SETUP_DB="\${INPUT_DB:-N}"
+
+DB_HOST="127.0.0.1"
+DB_PORT="${cfg.pluggedDbEngine === 'mysql' ? '3306' : '5432'}"
+DB_NAME="nova_memory"
+DB_USER="u_plugged_nova"
+DB_PASS="CAMBIAR_CONTRASENA_SEGURA"
+
+if [[ "$SETUP_DB" =~ ^[sSyY]$ ]]; then
+  read -r -p "   Host BD [127.0.0.1]: " IN_H; DB_HOST="\${IN_H:-127.0.0.1}"
+  read -r -p "   Puerto BD [$DB_PORT]: " IN_P; DB_PORT="\${IN_P:-$DB_PORT}"
+  read -r -p "   Nombre BD [nova_memory]: " IN_N; DB_NAME="\${IN_N:-nova_memory}"
+  read -r -p "   Usuario BD [u_plugged_nova]: " IN_U; DB_USER="\${IN_U:-u_plugged_nova}"
+  read -r -s -p "   Password BD: " IN_PW; echo ""; DB_PASS="\${IN_PW:-$DB_PASS}"
+fi
+
+echo ""
+echo "[1/5] Creando estructura de carpetas en $ROOT..."
+mkdir -p "$TOTA_HOME/soul" "$TOTA_HOME/memory" "$TOTA_HOME/logs" "$TOTA_HOME/backups" "$TOTA_HOME/runtime"
+mkdir -p "$ROOT/nova-workspace/notas" "$ROOT/nova-workspace/docs" "$ROOT/nova-workspace/scripts"
+mkdir -p "$ROOT/ollama/bin" "$ROOT/ollama/models" "$ROOT/pw-browsers"
+
+export HOME="$ROOT"
+export TOTA_HOME="$TOTA_HOME"
+export PATH="$ROOT/ollama/bin:$TOTA_HOME/runtime/node_modules/.bin:$PATH"
+export OLLAMA_HOST="127.0.0.1:11434"
+export OLLAMA_MODELS="$ROOT/ollama/models"
+export PLAYWRIGHT_BROWSERS_PATH="$ROOT/pw-browsers"
+
+echo "[2/5] Generando .env seguro, SOUL.md, Modelfile y configuraciones..."
+cat << EOF_ENV > "$ROOT/.env"
+TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
+TELEGRAM_ALLOWED_USER_ID="$TELEGRAM_UID"
+HOME="$ROOT"
+TOTA_HOME="$TOTA_HOME"
+PLAYWRIGHT_BROWSERS_PATH="$ROOT/pw-browsers"
+OLLAMA_HOST="http://127.0.0.1:11434"
+PLUGGED_DB_ENGINE="${cfg.pluggedDbEngine}"
+PLUGGED_DB_HOST="$DB_HOST"
+PLUGGED_DB_PORT="$DB_PORT"
+PLUGGED_DB_NAME="$DB_NAME"
+PLUGGED_DB_USER="$DB_USER"
+PLUGGED_DB_PASSWORD="$DB_PASS"
+EOF_ENV
+chmod 600 "$ROOT/.env"
+
+cat << 'EOF_GIT' > "$ROOT/.gitignore"
+${buildRepoGitignore()}
+EOF_GIT
+
+cat << 'EOF_PKG' > "$ROOT/package.json"
+${buildRepoPackageJson(cfg)}
+EOF_PKG
+
+cat << 'EOF_SOUL' > "$TOTA_HOME/soul/SOUL.md"
+${buildSoulMarkdown(cfg)}
+EOF_SOUL
+sed -i "s/${cfg.ownerName}/$OWNER_NAME/g; s/${cfg.telegramUserId}/$TELEGRAM_UID/g" "$TOTA_HOME/soul/SOUL.md"
+
+cat << 'EOF_MODEL' > "$TOTA_HOME/Modelfile.nova"
+${buildModelfile(cfg)}
+EOF_MODEL
+sed -i "s/PARAMETER num_ctx ${cfg.numCtx}/PARAMETER num_ctx $AUTO_CTX/g; s/${cfg.ownerName}/$OWNER_NAME/g" "$TOTA_HOME/Modelfile.nova"
+
+cat << 'EOF_CFG' > "$TOTA_HOME/tota.config.json"
+${buildTotaConfigJson(cfg)}
+EOF_CFG
+sed -i "s|${cfg.containerRoot}|$ROOT|g; s/${cfg.ownerName}/$OWNER_NAME/g; s/${cfg.telegramUserId}/$TELEGRAM_UID/g; s/\"numCtx\": ${cfg.numCtx}/\"numCtx\": $AUTO_CTX/g" "$TOTA_HOME/tota.config.json"
+
+cat << 'EOF_SQL' > "$TOTA_HOME/memory/migrate-plugged-db.sql"
+${buildMigrationSql(cfg)}
+EOF_SQL
+
+cat << 'EOF_START' > "$ROOT/start-nova.sh"
+${buildStartScript(cfg)}
+EOF_START
+sed -i "s|${cfg.containerRoot}|$ROOT|g" "$ROOT/start-nova.sh"
+chmod +x "$ROOT/start-nova.sh"
+
+cat << 'EOF_BACKUP' > "$ROOT/backup-nova.sh"
+${buildBackupScript(cfg)}
+EOF_BACKUP
+sed -i "s|${cfg.containerRoot}|$ROOT|g" "$ROOT/backup-nova.sh"
+chmod +x "$ROOT/backup-nova.sh"
+
+echo "[3/5] Verificando e instalando Ollama..."
+if ! command -v ollama >/dev/null 2>&1; then
+  if [ "$HAS_SUDO" -eq 1 ]; then
+    curl -fsSL https://ollama.com/install.sh | sh || true
+  fi
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "   Descargando binario portable de Ollama en $ROOT/ollama..."
+    if curl -fL "https://ollama.com/download/ollama-linux-\${ARCH}.tgz" -o /tmp/ollama.tgz; then
+      tar -xzf /tmp/ollama.tgz -C "$ROOT/ollama"
+      rm -f /tmp/ollama.tgz
+    elif curl -fL "https://ollama.com/download/ollama-linux-\${ARCH}.tar.zst" -o /tmp/ollama.tar.zst; then
+      tar --zstd -xf /tmp/ollama.tar.zst -C "$ROOT/ollama" || true
+      rm -f /tmp/ollama.tar.zst
+    fi
+  fi
+fi
+
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "[Error] No se pudo instalar Ollama automaticamente en este contenedor."
+  echo "        Alternativa: ejecuta Ollama en un VPS/PC y pon su URL en OLLAMA_HOST dentro de $ROOT/.env"
+  exit 1
+fi
+
+echo "[4/5] Verificando Node.js, tota-agent y Playwright Chromium..."
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  echo "[Error] Node.js/npm no esta instalado. Selecciona el servidor Node.js 20+ en Plugged Host."
+  exit 1
+fi
+
+if ! command -v tota >/dev/null 2>&1; then
+  if ! npm install -g tota-agent 2>/dev/null; then
+    echo "   Sin permisos globales para npm -g; instalando tota-agent en $TOTA_HOME/runtime..."
+    npm install --prefix "$TOTA_HOME/runtime" tota-agent
+  fi
+fi
+
+npx --yes playwright install chromium
+if [ "$HAS_SUDO" -eq 1 ]; then
+  npx --yes playwright install-deps chromium || true
+fi
+
+echo "[5/5] Descargando modelo ${cfg.ollamaModel} y compilando perfil nova-qwen25..."
+ollama serve > "$TOTA_HOME/logs/ollama-setup.log" 2>&1 &
+SETUP_OLLAMA_PID=$!
+for i in $(seq 1 30); do
+  if curl -sf "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+ollama pull "${cfg.ollamaModel}"
+ollama create nova-qwen25 -f "$TOTA_HOME/Modelfile.nova"
+kill "$SETUP_OLLAMA_PID" 2>/dev/null || true
+wait "$SETUP_OLLAMA_PID" 2>/dev/null || true
+
+echo ""
+echo "=================================================="
+echo "  Instalacion lista para $OWNER_NAME"
+echo "  Entorno   : $ENV_TYPE ($ARCH)"
+echo "  Contexto  : num_ctx=$AUTO_CTX"
+echo "  Telegram  : bloqueado al ID $TELEGRAM_UID"
+echo "=================================================="
+echo ""
+read -r -p "¿Arrancar Nova 24/7 ahora mismo? (S/n) [S]: " RUN_NOW
+if [[ ! "\${RUN_NOW:-S}" =~ ^[nN]$ ]]; then
+  exec bash "$ROOT/start-nova.sh"
+else
+  echo "Cuando quieras iniciar, ejecuta: bash $ROOT/start-nova.sh"
+fi
+`;
+}
+
 export function buildPackFiles(cfg: NovaDeployConfig): GeneratedFile[] {
   const root = cfg.containerRoot;
   const totaHome = `${root}/.tota`;
 
   return [
+    {
+      id: 'setup-wizard',
+      filename: 'setup-nova.sh',
+      targetPath: `${root}/setup-nova.sh`,
+      language: 'bash',
+      summary: 'Asistente interactivo autodetectable: detecta contenedor/VPS/RAM, pide token e ID en consola, instala todo y arranca 24/7.',
+      content: buildInteractiveSetupScript(cfg),
+    },
     {
       id: 'soul',
       filename: 'SOUL.md',
@@ -745,7 +1022,7 @@ export function buildPackFiles(cfg: NovaDeployConfig): GeneratedFile[] {
       filename: 'install-nova-plugged.sh',
       targetPath: `${root}/install-nova-plugged.sh`,
       language: 'bash',
-      summary: 'Instalador todo-en-uno para crear la arquitectura completa de Nova en un solo comando.',
+      summary: 'Instalador no-interactivo para crear la estructura base de archivos sin wizard.',
       content: buildAllInOneInstaller(cfg),
     },
   ];

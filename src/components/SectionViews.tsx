@@ -1,6 +1,8 @@
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
+  Copy,
   Download,
   Lock,
   Search,
@@ -10,10 +12,10 @@ import {
 import { useMemo, useState } from 'react';
 import {
   LINUX_WHITELIST_RULES,
-  buildAllInOneInstaller,
   buildBackupScript,
   buildConversationExamples,
   buildEnvExample,
+  buildInteractiveSetupScript,
   buildMigrationSql,
   buildModelfile,
   buildPackFiles,
@@ -32,6 +34,8 @@ interface SectionViewProps {
 
 export function SectionViews({ sectionId, config }: SectionViewProps) {
   switch (sectionId) {
+    case '00-guia-consola':
+      return <ConsoleGuideSection config={config} />;
     case '01-soul':
       return <SoulSection config={config} />;
     case '02-personalidad':
@@ -53,6 +57,214 @@ export function SectionViews({ sectionId, config }: SectionViewProps) {
     case '10-pack-final':
       return <FinalPackSection config={config} />;
   }
+}
+
+function ConsoleGuideSection({ config }: { config: NovaDeployConfig }) {
+  const setupScript = useMemo(() => buildInteractiveSetupScript(config), [config]);
+  const [completedSteps, setCompletedSteps] = useState<Record<string, boolean>>({});
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+
+  const toggleStep = (id: string) => {
+    setCompletedSteps((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const copyCommand = async (id: string, cmd: string) => {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiedCmd(id);
+      window.setTimeout(() => setCopiedCmd(null), 1600);
+    } catch {
+      setCopiedCmd(null);
+    }
+  };
+
+  const steps = [
+    {
+      id: 'step-1',
+      num: '01',
+      title: 'Ten a mano tu Token y tu User ID de Telegram',
+      detail:
+        'En Telegram abre @BotFather (/newbot) para sacar el token del bot, y @userinfobot para copiar tu ID numérico personal.',
+      command: null,
+    },
+    {
+      id: 'step-2',
+      num: '02',
+      title: 'Sube setup-nova.sh a Plugged Host (o súbelo vía GitHub)',
+      detail:
+        'Descarga el archivo con el botón de arriba y súbelo al Files Manager de Plugged Host (en /home/container) o inclúyelo en tu repo de GitHub.',
+      command: 'ls -lh setup-nova.sh',
+    },
+    {
+      id: 'step-3',
+      num: '03',
+      title: 'Ejecuta el asistente interactivo en la consola',
+      detail:
+        'El script detecta automáticamente si estás en contenedor sin root o VPS Ubuntu, ajusta num_ctx según tu RAM, te pide tu nombre/token/ID y descarga Ollama + qwen2.5:7b + tota-agent + Playwright.',
+      command: 'chmod +x setup-nova.sh && bash setup-nova.sh',
+    },
+    {
+      id: 'step-4',
+      num: '04',
+      title: 'Deja configurado el arranque automático 24/7',
+      detail:
+        'Cuando el wizard termine y pruebes a Nova en Telegram, pon "bash start-nova.sh" (o "npm start") como Startup Command en el panel de Plugged Host para que vuelva sola tras cualquier reinicio.',
+      command: 'bash start-nova.sh',
+    },
+  ];
+
+  const diagnostics = [
+    {
+      symptom: 'Sin permisos sudo / root en el contenedor',
+      autoBehavior:
+        'setup-nova.sh detecta falta de sudo, descarga Ollama portable en /ollama/bin e instala tota-agent localmente en .tota/runtime sin tocar rutas del sistema.',
+    },
+    {
+      symptom: 'Error al descargar Chromium o falta de librerías gráficas',
+      autoBehavior:
+        'Si hay sudo corre playwright install-deps; si no hay root configura --no-sandbox --disable-dev-shm-usage automáticamente.',
+    },
+    {
+      symptom: 'Se corta el proceso por falta de memoria (OOM Kill)',
+      autoBehavior:
+        'El script lee /proc/meminfo y baja num_ctx a 4096 si detecta <= 9.5 GB de RAM. Si tu nodo tiene menos de 7.2 GB libres, te avisa antes de descargar.',
+    },
+    {
+      symptom: 'Actualizas SOUL.md desde GitHub sin perder recuerdos',
+      autoBehavior:
+        'start-nova.sh copia SOUL.md y Modelfile.nova en cada arranque, pero nunca toca .env ni .tota/memory/nova-brain.db.',
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="max-w-2xl">
+          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+            Despliegue guiado en 4 pasos (cero configuración manual previa)
+          </h3>
+          <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+            Descarga <span className="font-mono text-xs">setup-nova.sh</span>, ejecútalo en la consola de Plugged Host y responde las 3 preguntas en terminal. Marca cada paso conforme avances.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => downloadTextFile('setup-nova.sh', setupScript)}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        >
+          <Download className="w-4 h-4" aria-hidden="true" />
+          <span>Descargar setup-nova.sh</span>
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] divide-y divide-slate-200 dark:divide-slate-800">
+        {steps.map((step) => {
+          const done = Boolean(completedSteps[step.id]);
+          return (
+            <div key={step.id} className="p-5 flex flex-col gap-3">
+              <div className="flex items-start gap-3">
+                <button
+                  type="button"
+                  onClick={() => toggleStep(step.id)}
+                  aria-pressed={done}
+                  aria-label={`Marcar paso ${step.num} como completado`}
+                  className={`mt-0.5 w-6 h-6 rounded-md border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                    done
+                      ? 'bg-emerald-600 border-emerald-600 text-white'
+                      : 'border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#0B0F17] text-slate-500 dark:text-slate-400 hover:border-blue-500'
+                  }`}
+                >
+                  {done ? (
+                    <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                  ) : (
+                    <span className="text-[11px] font-mono tabular-nums">{step.num}</span>
+                  )}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <h4
+                    className={`text-sm font-semibold ${
+                      done
+                        ? 'text-slate-500 dark:text-slate-400 line-through'
+                        : 'text-slate-900 dark:text-slate-100'
+                    }`}
+                  >
+                    {step.title}
+                  </h4>
+                  <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                    {step.detail}
+                  </p>
+                </div>
+              </div>
+
+              {step.command && (
+                <div className="ml-9 flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0B0F17]">
+                  <code className="text-xs sm:text-sm font-mono text-slate-800 dark:text-slate-200 break-all">
+                    {step.command}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyCommand(step.id, step.command!)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    {copiedCmd === step.id ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-500" aria-hidden="true" />
+                        <span>Copiado</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" aria-hidden="true" />
+                        <span>Copiar</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+            Qué resuelve automáticamente el script en Plugged Host
+          </h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 bg-slate-50/70 dark:bg-[#0F1522]">
+                <th className="py-3 px-4 font-medium w-64">Situación en consola</th>
+                <th className="py-3 px-4 font-medium">Respuesta automática de setup-nova.sh</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-sm">
+              {diagnostics.map((row) => (
+                <tr key={row.symptom} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30">
+                  <td className="py-3 px-4 font-medium text-slate-900 dark:text-slate-100 align-top">
+                    {row.symptom}
+                  </td>
+                  <td className="py-3 px-4 text-slate-600 dark:text-slate-300 align-top">
+                    {row.autoBehavior}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <CodeBlock
+        title="setup-nova.sh — Asistente interactivo autodetectable completo"
+        targetPath={`${config.containerRoot}/setup-nova.sh`}
+        language="bash"
+        code={setupScript}
+        downloadFilename="setup-nova.sh"
+        maxHeightClass="max-h-[560px]"
+      />
+    </div>
+  );
 }
 
 function SoulSection({ config }: { config: NovaDeployConfig }) {
@@ -933,10 +1145,10 @@ function PolicyLabel({ policy }: { policy: LinuxCommandRule['policy'] }) {
 
 function FinalPackSection({ config }: { config: NovaDeployConfig }) {
   const files = useMemo(() => buildPackFiles(config), [config]);
-  const [selectedId, setSelectedId] = useState<string>('installer');
+  const [selectedId, setSelectedId] = useState<string>('setup-wizard');
 
   const activeFile = files.find((f) => f.id === selectedId) ?? files[0];
-  const installerScript = useMemo(() => buildAllInOneInstaller(config), [config]);
+  const setupWizardScript = useMemo(() => buildInteractiveSetupScript(config), [config]);
 
   return (
     <div className="space-y-6">
@@ -946,16 +1158,16 @@ function FinalPackSection({ config }: { config: NovaDeployConfig }) {
             Versión final lista para copiar o desplegar en tota-agent
           </h3>
           <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-            Puedes copiar cada archivo individualmente o descargar <span className="font-mono text-xs">install-nova-plugged.sh</span> para crear toda la estructura dentro de <span className="font-mono text-xs">{config.containerRoot}</span> en un solo paso.
+            Descarga <span className="font-mono text-xs">setup-nova.sh</span> para el asistente interactivo en consola, o inspecciona y copia cada archivo individualmente para tu repo de GitHub.
           </p>
         </div>
         <button
           type="button"
-          onClick={() => downloadTextFile('install-nova-plugged.sh', installerScript)}
+          onClick={() => downloadTextFile('setup-nova.sh', setupWizardScript)}
           className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
         >
           <Download className="w-4 h-4" aria-hidden="true" />
-          <span>Descargar instalador completo (.sh)</span>
+          <span>Descargar setup-nova.sh</span>
         </button>
       </div>
 

@@ -1,4 +1,5 @@
 export type SectionId =
+  | '00-guia-consola'
   | '01-soul'
   | '02-personalidad'
   | '03-prompt'
