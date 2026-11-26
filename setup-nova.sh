@@ -370,7 +370,27 @@ fi
 
 if ! command -v tota >/dev/null 2>&1 || [ ! -f "$TOTA_HOME/runtime/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
   echo "   Instalando tota-agent y binarios nativos (better-sqlite3) en $TOTA_HOME/runtime..."
-  npm install --prefix "$TOTA_HOME/runtime" --allow-git=all --allow-scripts=better-sqlite3,protobufjs,keytar,@whiskeysockets/baileys tota-agent playwright
+  printf 'allow-git=all\n' > "$TOTA_HOME/runtime/.npmrc"
+  if [ ! -f "$TOTA_HOME/runtime/package.json" ]; then
+    cat << 'EOF_RT_PKG' > "$TOTA_HOME/runtime/package.json"
+{
+  "name": "nova-tota-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "allowScripts": {
+    "better-sqlite3": true,
+    "protobufjs": true,
+    "keytar": true,
+    "@whiskeysockets/baileys": true
+  }
+}
+EOF_RT_PKG
+  fi
+  npm install --prefix "$TOTA_HOME/runtime" tota-agent playwright
+  if [ ! -f "$TOTA_HOME/runtime/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+    (cd "$TOTA_HOME/runtime" && npm install-scripts approve better-sqlite3 protobufjs keytar @whiskeysockets/baileys >/dev/null 2>&1 || true)
+    npm rebuild --prefix "$TOTA_HOME/runtime" better-sqlite3 keytar protobufjs || true
+  fi
 fi
 
 if [ -x "$TOTA_HOME/runtime/node_modules/.bin/playwright" ]; then
