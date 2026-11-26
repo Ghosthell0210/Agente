@@ -1,0 +1,6 @@
+{
+  "name": "Nova Blueprint Workbench",
+  "description": "Arquitectura completa, configuraciones y paquete de despliegue 24/7 para Nova en tota-agent, Ollama (qwen2.5:7b), Playwright, Telegram y Plugged Host.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
