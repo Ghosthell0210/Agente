@@ -10,3 +10,4 @@ coverage/
 ollama/
 pw-browsers/
 nova-workspace/
+.tmp/

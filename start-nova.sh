@@ -20,32 +20,43 @@ export OLLAMA_NUM_PARALLEL="1"
 export OLLAMA_MAX_LOADED_MODELS="1"
 export OLLAMA_KEEP_ALIVE="15m"
 export PLAYWRIGHT_BROWSERS_PATH="${ROOT}/pw-browsers"
+export TMPDIR="${ROOT}/.tmp"
+export TEMP="${ROOT}/.tmp"
+export TMP="${ROOT}/.tmp"
 export npm_config_allow_git="all"
 
 mkdir -p "${TOTA_HOME}/soul" "${TOTA_HOME}/memory" "${TOTA_HOME}/logs" "${TOTA_HOME}/backups" "${TOTA_HOME}/runtime"
 mkdir -p "${ROOT}/nova-workspace/notas" "${ROOT}/nova-workspace/docs" "${ROOT}/nova-workspace/scripts"
-mkdir -p "${ROOT}/ollama/bin" "${ROOT}/ollama/models" "${ROOT}/pw-browsers"
+mkdir -p "${ROOT}/ollama/bin" "${ROOT}/ollama/models" "${ROOT}/pw-browsers" "${ROOT}/.tmp"
 
 if [ -f "${ROOT}/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   source "${ROOT}/.env"
   set +a
+  cp -f "${ROOT}/.env" "${TOTA_HOME}/.env"
+  chmod 600 "${TOTA_HOME}/.env"
 else
   echo "[Nova] AVISO: Falta ${ROOT}/.env con TELEGRAM_BOT_TOKEN. Ejecuta: bash setup-nova.sh"
   exit 1
 fi
 
-if ! command -v tota >/dev/null 2>&1; then
-  echo "[Nova] Instalando tota-agent..."
-  if ! npm install -g tota-agent 2>/dev/null; then
-    npm install --prefix "${TOTA_HOME}/runtime" tota-agent
-  fi
+[ -f "${TOTA_HOME}/tota.config.json" ] && cp -f "${TOTA_HOME}/tota.config.json" "${TOTA_HOME}/config.json"
+
+if ! command -v tota >/dev/null 2>&1 || [ ! -f "${TOTA_HOME}/runtime/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+  echo "[Nova] Instalando/reparando tota-agent y binarios SQLite en ${TOTA_HOME}/runtime..."
+  npm install --prefix "${TOTA_HOME}/runtime" --allow-git=all --allow-scripts=better-sqlite3,protobufjs,keytar,@whiskeysockets/baileys tota-agent playwright
 fi
 
-if [ -z "$(ls -A "${ROOT}/pw-browsers" 2>/dev/null)" ]; then
-  echo "[Nova] Descargando Chromium headless para Playwright..."
-  npx --yes playwright install chromium
+if ! find "${ROOT}/pw-browsers" -maxdepth 4 -type f \( -name "chrome" -o -name "chrome-headless-shell" \) 2>/dev/null | grep -q .; then
+  echo "[Nova] Descargando Chromium headless para Playwright en ${ROOT}/pw-browsers..."
+  if [ -x "${TOTA_HOME}/runtime/node_modules/.bin/playwright" ]; then
+    "${TOTA_HOME}/runtime/node_modules/.bin/playwright" install chromium
+  else
+    npm install --prefix "${TOTA_HOME}/runtime" --no-save playwright >/dev/null 2>&1 || true
+    "${TOTA_HOME}/runtime/node_modules/.bin/playwright" install chromium || npx --yes playwright install chromium
+  fi
+  rm -rf "${ROOT}/.tmp/"* 2>/dev/null || true
 fi
 
 echo "[Nova] Iniciando servidor Ollama local..."
@@ -77,7 +88,15 @@ trap cleanup EXIT INT TERM
 
 while true; do
   echo "[Nova] Arrancando tota-agent (Telegram + Playwright)..."
-  tota up --config "${TOTA_HOME}/tota.config.json" >> "${TOTA_HOME}/logs/nova-agent.log" 2>&1 || true
-  echo "[Nova] Proceso detenido. Reiniciando en 5 segundos..."
+  set +e
+  if tota --help 2>/dev/null | grep -qw "start"; then
+    tota start < /dev/null 2>&1 | tee -a "${TOTA_HOME}/logs/nova-agent.log"
+  else
+    tota up --config "${TOTA_HOME}/tota.config.json" < /dev/null 2>&1 | tee -a "${TOTA_HOME}/logs/nova-agent.log"
+  fi
+  EXIT_CODE=${PIPESTATUS[0]}
+  set -e
+  echo "[Nova] Proceso detenido (codigo $EXIT_CODE). Reiniciando en 5 segundos..."
   sleep 5
 done
+

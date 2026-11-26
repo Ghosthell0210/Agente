@@ -162,7 +162,7 @@ echo ""
 echo "[1/5] Creando estructura de carpetas en $ROOT..."
 mkdir -p "$TOTA_HOME/soul" "$TOTA_HOME/memory" "$TOTA_HOME/logs" "$TOTA_HOME/backups" "$TOTA_HOME/runtime"
 mkdir -p "$ROOT/nova-workspace/notas" "$ROOT/nova-workspace/docs" "$ROOT/nova-workspace/scripts"
-mkdir -p "$ROOT/ollama/bin" "$ROOT/ollama/models" "$ROOT/ollama/.dl" "$ROOT/pw-browsers"
+mkdir -p "$ROOT/ollama/bin" "$ROOT/ollama/models" "$ROOT/ollama/.dl" "$ROOT/pw-browsers" "$ROOT/.tmp"
 
 export HOME="$ROOT"
 export TOTA_HOME="$TOTA_HOME"
@@ -170,6 +170,9 @@ export PATH="$ROOT/ollama/bin:$TOTA_HOME/runtime/node_modules/.bin:$PATH"
 export OLLAMA_HOST="127.0.0.1:11434"
 export OLLAMA_MODELS="$ROOT/ollama/models"
 export PLAYWRIGHT_BROWSERS_PATH="$ROOT/pw-browsers"
+export TMPDIR="$ROOT/.tmp"
+export TEMP="$ROOT/.tmp"
+export TMP="$ROOT/.tmp"
 export npm_config_allow_git="all"
 
 echo "[2/5] Generando .env seguro, SOUL.md, Modelfile y configuraciones..."
@@ -189,6 +192,8 @@ PLUGGED_DB_USER="$DB_USER"
 PLUGGED_DB_PASSWORD="$DB_PASS"
 EOF_ENV
 chmod 600 "$ROOT/.env"
+cp -f "$ROOT/.env" "$TOTA_HOME/.env"
+chmod 600 "$TOTA_HOME/.env"
 
 cat << EOF_SOUL > "$TOTA_HOME/soul/SOUL.md"
 # SOUL.md — Nova (Asistente Digital Personal)
@@ -314,6 +319,7 @@ cat << EOF_CFG > "$TOTA_HOME/tota.config.json"
   }
 }
 EOF_CFG
+cp -f "$TOTA_HOME/tota.config.json" "$TOTA_HOME/config.json"
 
 echo "[3/5] Verificando e instalando Ollama..."
 if ! command -v ollama >/dev/null 2>&1; then
@@ -362,17 +368,24 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v tota >/dev/null 2>&1; then
-  if ! npm install -g tota-agent 2>/dev/null; then
-    echo "   Instalando tota-agent localmente en $TOTA_HOME/runtime..."
-    npm install --prefix "$TOTA_HOME/runtime" tota-agent
-  fi
+if ! command -v tota >/dev/null 2>&1 || [ ! -f "$TOTA_HOME/runtime/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+  echo "   Instalando tota-agent y binarios nativos (better-sqlite3) en $TOTA_HOME/runtime..."
+  npm install --prefix "$TOTA_HOME/runtime" --allow-git=all --allow-scripts=better-sqlite3,protobufjs,keytar,@whiskeysockets/baileys tota-agent playwright
 fi
 
-npx --yes playwright install chromium || echo "[Aviso] Chromium requirio configuracion manual; continuando..."
-if [ "$HAS_SUDO" -eq 1 ]; then
-  npx --yes playwright install-deps chromium || true
+if [ -x "$TOTA_HOME/runtime/node_modules/.bin/playwright" ]; then
+  "$TOTA_HOME/runtime/node_modules/.bin/playwright" install chromium || echo "[Aviso] Chromium requirio configuracion manual; continuando..."
+else
+  npx --yes playwright install chromium || echo "[Aviso] Chromium requirio configuracion manual; continuando..."
 fi
+if [ "$HAS_SUDO" -eq 1 ]; then
+  if [ -x "$TOTA_HOME/runtime/node_modules/.bin/playwright" ]; then
+    "$TOTA_HOME/runtime/node_modules/.bin/playwright" install-deps chromium || true
+  else
+    npx --yes playwright install-deps chromium || true
+  fi
+fi
+rm -rf "$ROOT/.tmp/"* 2>/dev/null || true
 
 echo "[5/5] Descargando modelo qwen2.5:7b y compilando perfil nova-qwen25..."
 ollama serve > "$TOTA_HOME/logs/ollama-setup.log" 2>&1 &

@@ -346,6 +346,7 @@ ollama/
 pw-browsers/
 node_modules/
 nova-workspace/docs/
+.tmp/
 `;
 }
 
@@ -450,17 +451,21 @@ export OLLAMA_NUM_PARALLEL="1"
 export OLLAMA_MAX_LOADED_MODELS="1"
 export OLLAMA_KEEP_ALIVE="15m"
 export PLAYWRIGHT_BROWSERS_PATH="${root}/pw-browsers"
+export TMPDIR="${root}/.tmp"
+export TEMP="${root}/.tmp"
+export TMP="${root}/.tmp"
 export npm_config_allow_git="all"
 
-mkdir -p "${totaHome}/soul" "${totaHome}/memory" "${totaHome}/logs" "${totaHome}/backups"
+mkdir -p "${totaHome}/soul" "${totaHome}/memory" "${totaHome}/logs" "${totaHome}/backups" "${totaHome}/runtime"
 mkdir -p "${root}/nova-workspace/notas" "${root}/nova-workspace/docs" "${root}/nova-workspace/scripts"
-mkdir -p "${root}/ollama/models" "${root}/pw-browsers"
+mkdir -p "${root}/ollama/bin" "${root}/ollama/models" "${root}/pw-browsers" "${root}/.tmp"
 
 # Sincronizar archivos versionados desde GitHub sin tocar la memoria SQLite ni .env
 SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SCRIPT_DIR/SOUL.md" ] && cp "$SCRIPT_DIR/SOUL.md" "${totaHome}/soul/SOUL.md"
 [ -f "$SCRIPT_DIR/Modelfile.nova" ] && cp "$SCRIPT_DIR/Modelfile.nova" "${totaHome}/Modelfile.nova"
 [ -f "$SCRIPT_DIR/tota.config.json" ] && cp "$SCRIPT_DIR/tota.config.json" "${totaHome}/tota.config.json"
+[ -f "${totaHome}/tota.config.json" ] && cp -f "${totaHome}/tota.config.json" "${totaHome}/config.json"
 [ -f "$SCRIPT_DIR/migrate-plugged-db.sql" ] && cp "$SCRIPT_DIR/migrate-plugged-db.sql" "${totaHome}/memory/migrate-plugged-db.sql"
 
 if [ -f "${root}/.env" ]; then
@@ -468,20 +473,28 @@ if [ -f "${root}/.env" ]; then
   # shellcheck disable=SC1091
   source "${root}/.env"
   set +a
+  cp -f "${root}/.env" "${totaHome}/.env"
+  chmod 600 "${totaHome}/.env"
 else
   echo "[Nova] AVISO: Falta ${root}/.env con TELEGRAM_BOT_TOKEN. Créalo desde .env.example."
   exit 1
 fi
 
-# Instalar tota-agent y Chromium de Playwright si el contenedor viene limpio
-if ! command -v tota >/dev/null 2>&1; then
-  echo "[Nova] Instalando tota-agent..."
-  npm install -g tota-agent
+# Instalar/reparar tota-agent (con scripts nativos de better-sqlite3) y Chromium de Playwright
+if ! command -v tota >/dev/null 2>&1 || [ ! -f "${totaHome}/runtime/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+  echo "[Nova] Instalando/reparando tota-agent y binarios SQLite en ${totaHome}/runtime..."
+  npm install --prefix "${totaHome}/runtime" --allow-git=all --allow-scripts=better-sqlite3,protobufjs,keytar,@whiskeysockets/baileys tota-agent playwright
 fi
 
-if [ -z "$(ls -A "${root}/pw-browsers" 2>/dev/null)" ]; then
-  echo "[Nova] Descargando Chromium headless para Playwright..."
-  npx playwright install chromium
+if ! find "${root}/pw-browsers" -maxdepth 4 -type f \\( -name "chrome" -o -name "chrome-headless-shell" \\) 2>/dev/null | grep -q .; then
+  echo "[Nova] Descargando Chromium headless para Playwright en ${root}/pw-browsers..."
+  if [ -x "${totaHome}/runtime/node_modules/.bin/playwright" ]; then
+    "${totaHome}/runtime/node_modules/.bin/playwright" install chromium
+  else
+    npm install --prefix "${totaHome}/runtime" --no-save playwright >/dev/null 2>&1 || true
+    "${totaHome}/runtime/node_modules/.bin/playwright" install chromium || npx --yes playwright install chromium
+  fi
+  rm -rf "${root}/.tmp/"* 2>/dev/null || true
 fi
 
 echo "[Nova] Iniciando servidor Ollama local..."
@@ -514,8 +527,15 @@ trap cleanup EXIT INT TERM
 # Loop supervisor 24/7 para tota-agent (auto-reinicio en caso de fallo)
 while true; do
   echo "[Nova] Arrancando tota-agent (Telegram + Playwright)..."
-  tota up --config "${totaHome}/tota.config.json" >> "${totaHome}/logs/nova-agent.log" 2>&1 || true
-  echo "[Nova] Proceso detenido. Reiniciando en 5 segundos..."
+  set +e
+  if tota --help 2>/dev/null | grep -qw "start"; then
+    tota start < /dev/null 2>&1 | tee -a "${totaHome}/logs/nova-agent.log"
+  else
+    tota up --config "${totaHome}/tota.config.json" < /dev/null 2>&1 | tee -a "${totaHome}/logs/nova-agent.log"
+  fi
+  EXIT_CODE=\${PIPESTATUS[0]}
+  set -e
+  echo "[Nova] Proceso detenido (codigo $EXIT_CODE). Reiniciando en 5 segundos..."
   sleep 5
 done
 `;
@@ -879,7 +899,7 @@ echo ""
 echo "[1/5] Creando estructura de carpetas en $ROOT..."
 mkdir -p "$TOTA_HOME/soul" "$TOTA_HOME/memory" "$TOTA_HOME/logs" "$TOTA_HOME/backups" "$TOTA_HOME/runtime"
 mkdir -p "$ROOT/nova-workspace/notas" "$ROOT/nova-workspace/docs" "$ROOT/nova-workspace/scripts"
-mkdir -p "$ROOT/ollama/bin" "$ROOT/ollama/models" "$ROOT/pw-browsers"
+mkdir -p "$ROOT/ollama/bin" "$ROOT/ollama/models" "$ROOT/pw-browsers" "$ROOT/.tmp"
 
 export HOME="$ROOT"
 export TOTA_HOME="$TOTA_HOME"
@@ -887,6 +907,9 @@ export PATH="$ROOT/ollama/bin:$TOTA_HOME/runtime/node_modules/.bin:$PATH"
 export OLLAMA_HOST="127.0.0.1:11434"
 export OLLAMA_MODELS="$ROOT/ollama/models"
 export PLAYWRIGHT_BROWSERS_PATH="$ROOT/pw-browsers"
+export TMPDIR="$ROOT/.tmp"
+export TEMP="$ROOT/.tmp"
+export TMP="$ROOT/.tmp"
 export npm_config_allow_git="all"
 
 echo "[2/5] Generando .env seguro, SOUL.md, Modelfile y configuraciones..."
@@ -905,16 +928,8 @@ PLUGGED_DB_USER="$DB_USER"
 PLUGGED_DB_PASSWORD="$DB_PASS"
 EOF_ENV
 chmod 600 "$ROOT/.env"
-
-if [ ! -d "$ROOT/.git" ]; then
-  cat << 'EOF_GIT' > "$ROOT/.gitignore"
-${buildRepoGitignore()}
-EOF_GIT
-
-  cat << 'EOF_PKG' > "$ROOT/package.json"
-${buildRepoPackageJson(cfg)}
-EOF_PKG
-fi
+cp -f "$ROOT/.env" "$TOTA_HOME/.env"
+chmod 600 "$TOTA_HOME/.env"
 
 cat << 'EOF_SOUL' > "$TOTA_HOME/soul/SOUL.md"
 ${buildSoulMarkdown(cfg)}
@@ -930,22 +945,33 @@ cat << 'EOF_CFG' > "$TOTA_HOME/tota.config.json"
 ${buildTotaConfigJson(cfg)}
 EOF_CFG
 sed -i "s|${cfg.containerRoot}|$ROOT|g; s/${cfg.ownerName}/$OWNER_NAME/g; s/${cfg.telegramUserId}/$TELEGRAM_UID/g; s/\"numCtx\": ${cfg.numCtx}/\"numCtx\": $AUTO_CTX/g" "$TOTA_HOME/tota.config.json"
+cp -f "$TOTA_HOME/tota.config.json" "$TOTA_HOME/config.json"
 
 cat << 'EOF_SQL' > "$TOTA_HOME/memory/migrate-plugged-db.sql"
 ${buildMigrationSql(cfg)}
 EOF_SQL
 
-cat << 'EOF_START' > "$ROOT/start-nova.sh"
+if [ ! -d "$ROOT/.git" ]; then
+  cat << 'EOF_GIT' > "$ROOT/.gitignore"
+${buildRepoGitignore()}
+EOF_GIT
+
+  cat << 'EOF_PKG' > "$ROOT/package.json"
+${buildRepoPackageJson(cfg)}
+EOF_PKG
+
+  cat << 'EOF_START' > "$ROOT/start-nova.sh"
 ${buildStartScript(cfg)}
 EOF_START
-sed -i "s|${cfg.containerRoot}|$ROOT|g" "$ROOT/start-nova.sh"
-chmod +x "$ROOT/start-nova.sh"
+  sed -i "s|${cfg.containerRoot}|$ROOT|g" "$ROOT/start-nova.sh"
+  chmod +x "$ROOT/start-nova.sh"
 
-cat << 'EOF_BACKUP' > "$ROOT/backup-nova.sh"
+  cat << 'EOF_BACKUP' > "$ROOT/backup-nova.sh"
 ${buildBackupScript(cfg)}
 EOF_BACKUP
-sed -i "s|${cfg.containerRoot}|$ROOT|g" "$ROOT/backup-nova.sh"
-chmod +x "$ROOT/backup-nova.sh"
+  sed -i "s|${cfg.containerRoot}|$ROOT|g" "$ROOT/backup-nova.sh"
+  chmod +x "$ROOT/backup-nova.sh"
+fi
 
 echo "[3/5] Verificando e instalando Ollama..."
 if ! command -v ollama >/dev/null 2>&1; then
@@ -994,17 +1020,24 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v tota >/dev/null 2>&1; then
-  if ! npm install -g tota-agent 2>/dev/null; then
-    echo "   Sin permisos globales para npm -g; instalando tota-agent en $TOTA_HOME/runtime..."
-    npm install --prefix "$TOTA_HOME/runtime" tota-agent
-  fi
+if ! command -v tota >/dev/null 2>&1 || [ ! -f "$TOTA_HOME/runtime/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+  echo "   Instalando tota-agent y binarios nativos (better-sqlite3) en $TOTA_HOME/runtime..."
+  npm install --prefix "$TOTA_HOME/runtime" --allow-git=all --allow-scripts=better-sqlite3,protobufjs,keytar,@whiskeysockets/baileys tota-agent playwright
 fi
 
-npx --yes playwright install chromium || echo "[Aviso] Chromium requirio configuracion manual; continuando..."
-if [ "$HAS_SUDO" -eq 1 ]; then
-  npx --yes playwright install-deps chromium || true
+if [ -x "$TOTA_HOME/runtime/node_modules/.bin/playwright" ]; then
+  "$TOTA_HOME/runtime/node_modules/.bin/playwright" install chromium || echo "[Aviso] Chromium requirio configuracion manual; continuando..."
+else
+  npx --yes playwright install chromium || echo "[Aviso] Chromium requirio configuracion manual; continuando..."
 fi
+if [ "$HAS_SUDO" -eq 1 ]; then
+  if [ -x "$TOTA_HOME/runtime/node_modules/.bin/playwright" ]; then
+    "$TOTA_HOME/runtime/node_modules/.bin/playwright" install-deps chromium || true
+  else
+    npx --yes playwright install-deps chromium || true
+  fi
+fi
+rm -rf "$ROOT/.tmp/"* 2>/dev/null || true
 
 echo "[5/5] Descargando modelo ${cfg.ollamaModel} y compilando perfil nova-qwen25..."
 ollama serve > "$TOTA_HOME/logs/ollama-setup.log" 2>&1 &
