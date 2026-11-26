@@ -384,23 +384,15 @@ const __dirname = path.dirname(__filename);
 
 const rootDir = __dirname;
 const envPath = path.join(rootDir, '.env');
+const setupDonePath = path.join(rootDir, '.tota', '.setup_complete');
 const setupPath = path.join(rootDir, 'setup-nova.sh');
 const startPath = path.join(rootDir, 'start-nova.sh');
 
-function makeExecutable(filePath) {
-  if (fs.existsSync(filePath)) {
-    fs.chmodSync(filePath, 0o755);
-  }
-}
-
-makeExecutable(setupPath);
-makeExecutable(startPath);
-
-if (!fs.existsSync(envPath)) {
+if (!fs.existsSync(envPath) || !fs.existsSync(setupDonePath)) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const uid = process.env.TELEGRAM_ALLOWED_USER_ID;
 
-  if (token && uid) {
+  if (!fs.existsSync(envPath) && token && uid) {
     const content = [
       \`TELEGRAM_BOT_TOKEN="\${token}"\`,
       \`TELEGRAM_ALLOWED_USER_ID="\${uid}"\`,
@@ -413,11 +405,15 @@ if (!fs.existsSync(envPath)) {
 
     fs.writeFileSync(envPath, content, { mode: 0o600 });
     console.log('[Nova] .env generado desde variables del panel.');
-  } else if (fs.existsSync(setupPath)) {
-    console.log('[Nova] Primer arranque detectado. Iniciando asistente interactivo setup-nova.sh...');
+  }
+
+  if (fs.existsSync(setupPath)) {
+    console.log('[Nova] Configuracion inicial pendiente. Ejecutando setup-nova.sh...');
     const res = spawnSync('bash', [setupPath], { stdio: 'inherit', cwd: rootDir });
-    process.exit(res.status ?? 0);
-  } else {
+    if (res.status !== 0) {
+      process.exit(res.status ?? 1);
+    }
+  } else if (!fs.existsSync(envPath)) {
     console.error('[Nova] Falta .env y setup-nova.sh en ' + rootDir);
     process.exit(1);
   }
@@ -454,6 +450,7 @@ export OLLAMA_NUM_PARALLEL="1"
 export OLLAMA_MAX_LOADED_MODELS="1"
 export OLLAMA_KEEP_ALIVE="15m"
 export PLAYWRIGHT_BROWSERS_PATH="${root}/pw-browsers"
+export npm_config_allow_git="all"
 
 mkdir -p "${totaHome}/soul" "${totaHome}/memory" "${totaHome}/logs" "${totaHome}/backups"
 mkdir -p "${root}/nova-workspace/notas" "${root}/nova-workspace/docs" "${root}/nova-workspace/scripts"
@@ -890,6 +887,7 @@ export PATH="$ROOT/ollama/bin:$TOTA_HOME/runtime/node_modules/.bin:$PATH"
 export OLLAMA_HOST="127.0.0.1:11434"
 export OLLAMA_MODELS="$ROOT/ollama/models"
 export PLAYWRIGHT_BROWSERS_PATH="$ROOT/pw-browsers"
+export npm_config_allow_git="all"
 
 echo "[2/5] Generando .env seguro, SOUL.md, Modelfile y configuraciones..."
 cat << EOF_ENV > "$ROOT/.env"
@@ -955,23 +953,31 @@ if ! command -v ollama >/dev/null 2>&1; then
     curl -fsSL https://ollama.com/install.sh | sh || true
   fi
   if ! command -v ollama >/dev/null 2>&1; then
-    echo "   Descargando binario portable de Ollama en $ROOT/ollama (puede tardar 1-2 min)..."
-    if curl -fL --progress-bar "https://ollama.com/download/ollama-linux-\${ARCH}.tar.zst" -o /tmp/ollama.tar.zst; then
+    DL_DIR="$ROOT/ollama/.dl"
+    mkdir -p "$DL_DIR"
+    echo "   Descargando binario portable de Ollama en $DL_DIR (puede tardar 1-2 min)..."
+    if curl -fL -C - "https://ollama.com/download/ollama-linux-\${ARCH}.tar.zst" -o "$DL_DIR/ollama.tar.zst"; then
       if command -v zstd >/dev/null 2>&1; then
-        tar --zstd -xf /tmp/ollama.tar.zst -C "$ROOT/ollama"
+        tar --zstd -xf "$DL_DIR/ollama.tar.zst" -C "$ROOT/ollama"
       else
-        echo "   zstd no encontrado en el sistema; usando descompresor JS temporal..."
-        npm install --prefix /tmp/zstd-helper --no-save fzstd >/dev/null 2>&1
-        NODE_PATH=/tmp/zstd-helper/node_modules node --input-type=commonjs -e '
+        echo "   Descomprimiendo .tar.zst en disco local mediante streaming JS..."
+        npm install --prefix "$DL_DIR/zstd-helper" --no-save fzstd >/dev/null 2>&1
+        NODE_PATH="$DL_DIR/zstd-helper/node_modules" node --input-type=commonjs -e '
           const fs = require("node:fs");
-          const { decompress } = require("fzstd");
-          const data = fs.readFileSync("/tmp/ollama.tar.zst");
-          fs.writeFileSync("/tmp/ollama.tar", Buffer.from(decompress(data)));
-        '
-        tar -xf /tmp/ollama.tar -C "$ROOT/ollama"
-        rm -rf /tmp/ollama.tar /tmp/zstd-helper
+          const { Decompress } = require("fzstd");
+          (async () => {
+            const out = fs.createWriteStream(process.argv[2]);
+            const d = new Decompress((chunk) => out.write(Buffer.from(chunk)));
+            for await (const c of fs.createReadStream(process.argv[1])) {
+              d.push(c);
+            }
+            d.push(new Uint8Array(0), true);
+            await new Promise((r) => out.end(r));
+          })().catch((e) => { console.error(e); process.exit(1); });
+        ' "$DL_DIR/ollama.tar.zst" "$DL_DIR/ollama.tar"
+        tar -xf "$DL_DIR/ollama.tar" -C "$ROOT/ollama"
       fi
-      rm -f /tmp/ollama.tar.zst
+      rm -rf "$DL_DIR"
     fi
   fi
 fi
@@ -995,7 +1001,7 @@ if ! command -v tota >/dev/null 2>&1; then
   fi
 fi
 
-npx --yes playwright install chromium
+npx --yes playwright install chromium || echo "[Aviso] Chromium requirio configuracion manual; continuando..."
 if [ "$HAS_SUDO" -eq 1 ]; then
   npx --yes playwright install-deps chromium || true
 fi
@@ -1014,6 +1020,8 @@ ollama pull "${cfg.ollamaModel}"
 ollama create nova-qwen25 -f "$TOTA_HOME/Modelfile.nova"
 kill "$SETUP_OLLAMA_PID" 2>/dev/null || true
 wait "$SETUP_OLLAMA_PID" 2>/dev/null || true
+
+touch "$TOTA_HOME/.setup_complete"
 
 echo ""
 echo "=================================================="

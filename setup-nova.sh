@@ -96,54 +96,73 @@ if [ "$FREE_DISK_MB" -lt 8500 ]; then
   echo ""
 fi
 
-# 2. Preguntas interactivas en consola (echo con salto de linea para consolas Pterodactyl/Calagopus)
-echo "1) Tu nombre o apodo [Cristian]:"
-read -r INPUT_OWNER
-OWNER_NAME="${INPUT_OWNER:-Cristian}"
+# 2. Preguntas interactivas en consola (si .env ya existe de un intento previo, lo reutiliza)
+if [ -f "$ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
 
-while true; do
-  echo "2) Token de tu bot (@BotFather):"
-  read -r INPUT_TOKEN
-  if [[ "$INPUT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{20,}$ ]]; then
-    TELEGRAM_TOKEN="$INPUT_TOKEN"
-    break
+if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_ALLOWED_USER_ID:-}" ] && [[ "${TELEGRAM_BOT_TOKEN:-}" != *"REEMPLAZAR"* ]]; then
+  echo "[Detectado] Credenciales previas en $ROOT/.env; continuando instalacion..."
+  OWNER_NAME="${OWNER_NAME:-Cristian}"
+  TELEGRAM_TOKEN="$TELEGRAM_BOT_TOKEN"
+  TELEGRAM_UID="$TELEGRAM_ALLOWED_USER_ID"
+  DB_HOST="${PLUGGED_DB_HOST:-127.0.0.1}"
+  DB_PORT="${PLUGGED_DB_PORT:-3306}"
+  DB_NAME="${PLUGGED_DB_NAME:-nova_memory}"
+  DB_USER="${PLUGGED_DB_USER:-u_plugged_nova}"
+  DB_PASS="${PLUGGED_DB_PASSWORD:-CAMBIAR_CONTRASENA_SEGURA}"
+else
+  echo "1) Tu nombre o apodo [Cristian]:"
+  read -r INPUT_OWNER
+  OWNER_NAME="${INPUT_OWNER:-Cristian}"
+
+  while true; do
+    echo "2) Token de tu bot (@BotFather):"
+    read -r INPUT_TOKEN
+    if [[ "$INPUT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{20,}$ ]]; then
+      TELEGRAM_TOKEN="$INPUT_TOKEN"
+      break
+    fi
+    echo "   Token invalido. Debe verse como 123456789:ABCdef... Intenta otra vez."
+  done
+
+  while true; do
+    echo "3) Tu Telegram User ID numerico (@userinfobot):"
+    read -r INPUT_UID
+    if [[ "$INPUT_UID" =~ ^[0-9]+$ ]]; then
+      TELEGRAM_UID="$INPUT_UID"
+      break
+    fi
+    echo "   El User ID debe contener solo numeros."
+  done
+
+  echo "4) ¿Configurar credenciales de BD Plugged Host ahora? (s/N) [N]:"
+  read -r INPUT_DB
+  SETUP_DB="${INPUT_DB:-N}"
+
+  DB_HOST="127.0.0.1"
+  DB_PORT="3306"
+  DB_NAME="nova_memory"
+  DB_USER="u_plugged_nova"
+  DB_PASS="CAMBIAR_CONTRASENA_SEGURA"
+
+  if [[ "$SETUP_DB" =~ ^[sSyY]$ ]]; then
+    echo "   Host BD [127.0.0.1]:"; read -r IN_H; DB_HOST="${IN_H:-127.0.0.1}"
+    echo "   Puerto BD [3306]:"; read -r IN_P; DB_PORT="${IN_P:-3306}"
+    echo "   Nombre BD [nova_memory]:"; read -r IN_N; DB_NAME="${IN_N:-nova_memory}"
+    echo "   Usuario BD [u_plugged_nova]:"; read -r IN_U; DB_USER="${IN_U:-u_plugged_nova}"
+    echo "   Password BD:"; read -r -s IN_PW; echo ""; DB_PASS="${IN_PW:-$DB_PASS}"
   fi
-  echo "   Token invalido. Debe verse como 123456789:ABCdef... Intenta otra vez."
-done
-
-while true; do
-  echo "3) Tu Telegram User ID numerico (@userinfobot):"
-  read -r INPUT_UID
-  if [[ "$INPUT_UID" =~ ^[0-9]+$ ]]; then
-    TELEGRAM_UID="$INPUT_UID"
-    break
-  fi
-  echo "   El User ID debe contener solo numeros."
-done
-
-echo "4) ¿Configurar credenciales de BD Plugged Host ahora? (s/N) [N]:"
-read -r INPUT_DB
-SETUP_DB="${INPUT_DB:-N}"
-
-DB_HOST="127.0.0.1"
-DB_PORT="3306"
-DB_NAME="nova_memory"
-DB_USER="u_plugged_nova"
-DB_PASS="CAMBIAR_CONTRASENA_SEGURA"
-
-if [[ "$SETUP_DB" =~ ^[sSyY]$ ]]; then
-  echo "   Host BD [127.0.0.1]:"; read -r IN_H; DB_HOST="${IN_H:-127.0.0.1}"
-  echo "   Puerto BD [3306]:"; read -r IN_P; DB_PORT="${IN_P:-3306}"
-  echo "   Nombre BD [nova_memory]:"; read -r IN_N; DB_NAME="${IN_N:-nova_memory}"
-  echo "   Usuario BD [u_plugged_nova]:"; read -r IN_U; DB_USER="${IN_U:-u_plugged_nova}"
-  echo "   Password BD:"; read -r -s IN_PW; echo ""; DB_PASS="${IN_PW:-$DB_PASS}"
 fi
 
 echo ""
 echo "[1/5] Creando estructura de carpetas en $ROOT..."
 mkdir -p "$TOTA_HOME/soul" "$TOTA_HOME/memory" "$TOTA_HOME/logs" "$TOTA_HOME/backups" "$TOTA_HOME/runtime"
 mkdir -p "$ROOT/nova-workspace/notas" "$ROOT/nova-workspace/docs" "$ROOT/nova-workspace/scripts"
-mkdir -p "$ROOT/ollama/bin" "$ROOT/ollama/models" "$ROOT/pw-browsers"
+mkdir -p "$ROOT/ollama/bin" "$ROOT/ollama/models" "$ROOT/ollama/.dl" "$ROOT/pw-browsers"
 
 export HOME="$ROOT"
 export TOTA_HOME="$TOTA_HOME"
@@ -151,9 +170,11 @@ export PATH="$ROOT/ollama/bin:$TOTA_HOME/runtime/node_modules/.bin:$PATH"
 export OLLAMA_HOST="127.0.0.1:11434"
 export OLLAMA_MODELS="$ROOT/ollama/models"
 export PLAYWRIGHT_BROWSERS_PATH="$ROOT/pw-browsers"
+export npm_config_allow_git="all"
 
 echo "[2/5] Generando .env seguro, SOUL.md, Modelfile y configuraciones..."
 cat << EOF_ENV > "$ROOT/.env"
+OWNER_NAME="$OWNER_NAME"
 TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 TELEGRAM_ALLOWED_USER_ID="$TELEGRAM_UID"
 HOME="$ROOT"
@@ -300,23 +321,31 @@ if ! command -v ollama >/dev/null 2>&1; then
     curl -fsSL https://ollama.com/install.sh | sh || true
   fi
   if ! command -v ollama >/dev/null 2>&1; then
-    echo "   Descargando binario portable de Ollama en $ROOT/ollama (puede tardar 1-2 min)..."
-    if curl -fL --progress-bar "https://ollama.com/download/ollama-linux-${ARCH}.tar.zst" -o /tmp/ollama.tar.zst; then
+    DL_DIR="$ROOT/ollama/.dl"
+    mkdir -p "$DL_DIR"
+    echo "   Descargando binario portable de Ollama en $DL_DIR (puede tardar 1-2 min)..."
+    if curl -fL -C - "https://ollama.com/download/ollama-linux-${ARCH}.tar.zst" -o "$DL_DIR/ollama.tar.zst"; then
       if command -v zstd >/dev/null 2>&1; then
-        tar --zstd -xf /tmp/ollama.tar.zst -C "$ROOT/ollama"
+        tar --zstd -xf "$DL_DIR/ollama.tar.zst" -C "$ROOT/ollama"
       else
-        echo "   zstd no encontrado en el sistema; usando descompresor JS temporal..."
-        npm install --prefix /tmp/zstd-helper --no-save fzstd >/dev/null 2>&1
-        NODE_PATH=/tmp/zstd-helper/node_modules node --input-type=commonjs -e '
+        echo "   Descomprimiendo .tar.zst en disco local mediante streaming JS..."
+        npm install --prefix "$DL_DIR/zstd-helper" --no-save fzstd >/dev/null 2>&1
+        NODE_PATH="$DL_DIR/zstd-helper/node_modules" node --input-type=commonjs -e '
           const fs = require("node:fs");
-          const { decompress } = require("fzstd");
-          const data = fs.readFileSync("/tmp/ollama.tar.zst");
-          fs.writeFileSync("/tmp/ollama.tar", Buffer.from(decompress(data)));
-        '
-        tar -xf /tmp/ollama.tar -C "$ROOT/ollama"
-        rm -rf /tmp/ollama.tar /tmp/zstd-helper
+          const { Decompress } = require("fzstd");
+          (async () => {
+            const out = fs.createWriteStream(process.argv[2]);
+            const d = new Decompress((chunk) => out.write(Buffer.from(chunk)));
+            for await (const c of fs.createReadStream(process.argv[1])) {
+              d.push(c);
+            }
+            d.push(new Uint8Array(0), true);
+            await new Promise((r) => out.end(r));
+          })().catch((e) => { console.error(e); process.exit(1); });
+        ' "$DL_DIR/ollama.tar.zst" "$DL_DIR/ollama.tar"
+        tar -xf "$DL_DIR/ollama.tar" -C "$ROOT/ollama"
       fi
-      rm -f /tmp/ollama.tar.zst
+      rm -rf "$DL_DIR"
     fi
   fi
 fi
@@ -335,12 +364,12 @@ fi
 
 if ! command -v tota >/dev/null 2>&1; then
   if ! npm install -g tota-agent 2>/dev/null; then
-    echo "   Sin permisos globales para npm -g; instalando tota-agent en $TOTA_HOME/runtime..."
+    echo "   Instalando tota-agent localmente en $TOTA_HOME/runtime..."
     npm install --prefix "$TOTA_HOME/runtime" tota-agent
   fi
 fi
 
-npx --yes playwright install chromium
+npx --yes playwright install chromium || echo "[Aviso] Chromium requirio configuracion manual; continuando..."
 if [ "$HAS_SUDO" -eq 1 ]; then
   npx --yes playwright install-deps chromium || true
 fi
@@ -359,6 +388,8 @@ ollama pull "qwen2.5:7b"
 ollama create nova-qwen25 -f "$TOTA_HOME/Modelfile.nova"
 kill "$SETUP_OLLAMA_PID" 2>/dev/null || true
 wait "$SETUP_OLLAMA_PID" 2>/dev/null || true
+
+touch "$TOTA_HOME/.setup_complete"
 
 echo ""
 echo "=================================================="

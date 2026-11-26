@@ -20,6 +20,7 @@ export OLLAMA_NUM_PARALLEL="1"
 export OLLAMA_MAX_LOADED_MODELS="1"
 export OLLAMA_KEEP_ALIVE="15m"
 export PLAYWRIGHT_BROWSERS_PATH="${ROOT}/pw-browsers"
+export npm_config_allow_git="all"
 
 mkdir -p "${TOTA_HOME}/soul" "${TOTA_HOME}/memory" "${TOTA_HOME}/logs" "${TOTA_HOME}/backups" "${TOTA_HOME}/runtime"
 mkdir -p "${ROOT}/nova-workspace/notas" "${ROOT}/nova-workspace/docs" "${ROOT}/nova-workspace/scripts"

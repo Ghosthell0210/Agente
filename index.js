@@ -9,23 +9,15 @@ const __dirname = path.dirname(__filename);
 
 const rootDir = __dirname;
 const envPath = path.join(rootDir, '.env');
+const setupDonePath = path.join(rootDir, '.tota', '.setup_complete');
 const setupPath = path.join(rootDir, 'setup-nova.sh');
 const startPath = path.join(rootDir, 'start-nova.sh');
 
-function makeExecutable(filePath) {
-  if (fs.existsSync(filePath)) {
-    fs.chmodSync(filePath, 0o755);
-  }
-}
-
-makeExecutable(setupPath);
-makeExecutable(startPath);
-
-if (!fs.existsSync(envPath)) {
+if (!fs.existsSync(envPath) || !fs.existsSync(setupDonePath)) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const uid = process.env.TELEGRAM_ALLOWED_USER_ID;
 
-  if (token && uid) {
+  if (!fs.existsSync(envPath) && token && uid) {
     const content =
       [
         `TELEGRAM_BOT_TOKEN="${token}"`,
@@ -39,11 +31,15 @@ if (!fs.existsSync(envPath)) {
 
     fs.writeFileSync(envPath, content, { mode: 0o600 });
     console.log('[Nova] .env generado desde variables del panel.');
-  } else if (fs.existsSync(setupPath)) {
-    console.log('[Nova] Primer arranque detectado. Iniciando asistente interactivo setup-nova.sh...');
+  }
+
+  if (fs.existsSync(setupPath)) {
+    console.log('[Nova] Configuracion inicial pendiente. Ejecutando setup-nova.sh...');
     const res = spawnSync('bash', [setupPath], { stdio: 'inherit', cwd: rootDir });
-    process.exit(res.status ?? 0);
-  } else {
+    if (res.status !== 0) {
+      process.exit(res.status ?? 1);
+    }
+  } else if (!fs.existsSync(envPath)) {
     console.error('[Nova] Falta .env y setup-nova.sh en ' + rootDir);
     process.exit(1);
   }
