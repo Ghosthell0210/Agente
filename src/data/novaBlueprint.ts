@@ -355,11 +355,12 @@ export function buildRepoPackageJson(cfg: NovaDeployConfig): string {
       name: 'nova-tota-agent',
       version: '1.0.0',
       private: true,
+      main: 'index.js',
       description: `Asistente personal Nova (${cfg.ownerName}) sobre tota-agent + Ollama ${cfg.ollamaModel} + Playwright en Telegram`,
       scripts: {
-        start: 'bash start-nova.sh',
+        start: 'node index.js',
         backup: 'bash backup-nova.sh',
-        setup: 'bash install-nova-plugged.sh',
+        setup: 'bash setup-nova.sh',
       },
       engines: {
         node: '>=20.0.0',
@@ -368,6 +369,65 @@ export function buildRepoPackageJson(cfg: NovaDeployConfig): string {
     null,
     2
   );
+}
+
+export function buildRepoIndexJs(cfg: NovaDeployConfig): string {
+  return `// Punto de entrada para Plugged Host (Calagopus Daemon / MAIN_FILE=index.js)
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn, spawnSync } = require('node:child_process');
+
+const rootDir = __dirname;
+const envPath = path.join(rootDir, '.env');
+const setupPath = path.join(rootDir, 'setup-nova.sh');
+const startPath = path.join(rootDir, 'start-nova.sh');
+
+function makeExecutable(filePath) {
+  if (fs.existsSync(filePath)) {
+    fs.chmodSync(filePath, 0o755);
+  }
+}
+
+makeExecutable(setupPath);
+makeExecutable(startPath);
+
+if (!fs.existsSync(envPath)) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const uid = process.env.TELEGRAM_ALLOWED_USER_ID;
+
+  if (token && uid) {
+    const content = [
+      \`TELEGRAM_BOT_TOKEN="\${token}"\`,
+      \`TELEGRAM_ALLOWED_USER_ID="\${uid}"\`,
+      \`HOME="\${rootDir}"\`,
+      \`TOTA_HOME="\${rootDir}/.tota"\`,
+      \`PLAYWRIGHT_BROWSERS_PATH="\${rootDir}/pw-browsers"\`,
+      'OLLAMA_HOST="http://127.0.0.1:11434"',
+      \`PLUGGED_DB_ENGINE="${cfg.pluggedDbEngine}"\`,
+    ].join('\\n') + '\\n';
+
+    fs.writeFileSync(envPath, content, { mode: 0o600 });
+    console.log('[Nova] .env generado desde variables del panel.');
+  } else if (fs.existsSync(setupPath)) {
+    console.log('[Nova] Primer arranque detectado. Iniciando asistente interactivo setup-nova.sh...');
+    const res = spawnSync('bash', [setupPath], { stdio: 'inherit', cwd: rootDir });
+    process.exit(res.status ?? 0);
+  } else {
+    console.error('[Nova] Falta .env y setup-nova.sh en ' + rootDir);
+    process.exit(1);
+  }
+}
+
+console.log('[Nova] Lanzando supervisor 24/7 (start-nova.sh)...');
+const child = spawn('bash', [startPath], { stdio: 'inherit', cwd: rootDir });
+
+process.on('SIGINT', () => child.kill('SIGINT'));
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+
+child.on('exit', (code) => {
+  process.exit(code ?? 0);
+});
+`;
 }
 
 export function buildStartScript(cfg: NovaDeployConfig): string {
@@ -937,6 +997,14 @@ export function buildPackFiles(cfg: NovaDeployConfig): GeneratedFile[] {
   const totaHome = `${root}/.tota`;
 
   return [
+    {
+      id: 'index-js',
+      filename: 'index.js',
+      targetPath: `${root}/index.js`,
+      language: 'javascript',
+      summary: 'Punto de entrada exacto que ejecuta Plugged Host (MAIN_FILE=index.js): lanza setup-nova.sh en el primer inicio y start-nova.sh después.',
+      content: buildRepoIndexJs(cfg),
+    },
     {
       id: 'setup-wizard',
       filename: 'setup-nova.sh',

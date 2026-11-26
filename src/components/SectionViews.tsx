@@ -141,10 +141,10 @@ function ConsoleGuideSection({ config }: { config: NovaDeployConfig }) {
       <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-5 flex flex-wrap items-center justify-between gap-4">
         <div className="max-w-2xl">
           <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-            Despliegue guiado en 4 pasos (cero configuración manual previa)
+            Despliegue guiado en 4 pasos (compatible con Plugged Host MAIN_FILE=index.js)
           </h3>
           <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
-            Descarga <span className="font-mono text-xs">setup-nova.sh</span>, ejecútalo en la consola de Plugged Host y responde las 3 preguntas en terminal. Marca cada paso conforme avances.
+            Importante: sube a tu repo de GitHub únicamente los archivos generados de Nova (<span className="font-mono text-xs">index.js</span>, <span className="font-mono text-xs">package.json</span>, <span className="font-mono text-xs">setup-nova.sh</span>, <span className="font-mono text-xs">start-nova.sh</span>, <span className="font-mono text-xs">SOUL.md</span>, etc. de la sección 10), nunca el código Vite/React de esta herramienta web.
           </p>
         </div>
         <button
