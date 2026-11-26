@@ -466,6 +466,7 @@ SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SCRIPT_DIR/Modelfile.nova" ] && cp "$SCRIPT_DIR/Modelfile.nova" "${totaHome}/Modelfile.nova"
 [ -f "$SCRIPT_DIR/tota.config.json" ] && cp "$SCRIPT_DIR/tota.config.json" "${totaHome}/tota.config.json"
 [ -f "${totaHome}/tota.config.json" ] && cp -f "${totaHome}/tota.config.json" "${totaHome}/config.json"
+[ -f "${totaHome}/soul/SOUL.md" ] && cp -f "${totaHome}/soul/SOUL.md" "${totaHome}/soul/soul.md"
 [ -f "$SCRIPT_DIR/migrate-plugged-db.sql" ] && cp "$SCRIPT_DIR/migrate-plugged-db.sql" "${totaHome}/memory/migrate-plugged-db.sql"
 
 if [ -f "${root}/.env" ]; then
@@ -478,6 +479,70 @@ if [ -f "${root}/.env" ]; then
 else
   echo "[Nova] AVISO: Falta ${root}/.env con TELEGRAM_BOT_TOKEN. Créalo desde .env.example."
   exit 1
+fi
+
+if [ ! -f "${totaHome}/tota.yaml" ] || ! grep -q "botToken:" "${totaHome}/tota.yaml" 2>/dev/null; then
+  OWNER_VAL="\${OWNER_NAME:-${cfg.ownerName}}"
+  OLLAMA_V1_URL="\${OLLAMA_HOST:-http://127.0.0.1:11434}"
+  OLLAMA_V1_URL="\${OLLAMA_V1_URL%/}"
+  [[ "$OLLAMA_V1_URL" != */v1 ]] && OLLAMA_V1_URL="\${OLLAMA_V1_URL}/v1"
+
+  cat << EOF_YAML > "${totaHome}/tota.yaml"
+identity:
+  name: Nova
+  owner: "\${OWNER_VAL}"
+  creator: Nova Blueprint
+providers:
+  default: ollamaLocal
+  ollamaLocal:
+    name: ollamaLocal
+    apiKey: ""
+    baseUrl: "\${OLLAMA_V1_URL}"
+    model: nova-qwen25
+    enabled: true
+channels:
+  telegram:
+    enabled: true
+    botToken: "\${TELEGRAM_BOT_TOKEN}"
+    webhookUrl: ""
+    allowedChatIds:
+      - \${TELEGRAM_ALLOWED_USER_ID}
+    streaming: true
+    admins:
+      - userId: \${TELEGRAM_ALLOWED_USER_ID}
+        chatId: \${TELEGRAM_ALLOWED_USER_ID}
+        username: "\${OWNER_VAL}"
+        approvedAt: "2026-11-26T00:00:00.000Z"
+    members: []
+    pending: []
+  api:
+    enabled: false
+    port: 3001
+    apiKey: ""
+  whatsapp:
+    enabled: false
+  ui:
+    enabled: false
+    port: 3002
+webSearch:
+  enabled: true
+  provider: auto
+  maxResults: 5
+memory:
+  shortTermMaxMessages: 20
+  secondBrain:
+    enabled: true
+    maxRecords: 50
+heartbeat:
+  intervalMinutes: 60
+tokens:
+  dailyBudget: 1000000
+capabilities:
+  computer:
+    enabled: false
+EOF_YAML
+  chmod 600 "${totaHome}/tota.yaml"
+  echo "[Nova] tota.yaml generado para Telegram + Ollama (nova-qwen25)."
 fi
 
 # Instalar/reparar tota-agent (con scripts nativos de better-sqlite3) y Chromium de Playwright
@@ -546,10 +611,10 @@ trap cleanup EXIT INT TERM
 
 # Loop supervisor 24/7 para tota-agent (auto-reinicio en caso de fallo)
 while true; do
-  echo "[Nova] Arrancando tota-agent (Telegram + Playwright)..."
+  echo "[Nova] Arrancando tota-agent (Telegram + Ollama + Playwright)..."
   set +e
   if tota --help 2>/dev/null | grep -qw "start"; then
-    tota start < /dev/null 2>&1 | tee -a "${totaHome}/logs/nova-agent.log"
+    tota start --daemon --verbose < /dev/null 2>&1 | tee -a "${totaHome}/logs/nova-agent.log"
   else
     tota up --config "${totaHome}/tota.config.json" < /dev/null 2>&1 | tee -a "${totaHome}/logs/nova-agent.log"
   fi
@@ -955,6 +1020,7 @@ cat << 'EOF_SOUL' > "$TOTA_HOME/soul/SOUL.md"
 ${buildSoulMarkdown(cfg)}
 EOF_SOUL
 sed -i "s/${cfg.ownerName}/$OWNER_NAME/g; s/${cfg.telegramUserId}/$TELEGRAM_UID/g" "$TOTA_HOME/soul/SOUL.md"
+cp -f "$TOTA_HOME/soul/SOUL.md" "$TOTA_HOME/soul/soul.md"
 
 cat << 'EOF_MODEL' > "$TOTA_HOME/Modelfile.nova"
 ${buildModelfile(cfg)}
@@ -966,6 +1032,66 @@ ${buildTotaConfigJson(cfg)}
 EOF_CFG
 sed -i "s|${cfg.containerRoot}|$ROOT|g; s/${cfg.ownerName}/$OWNER_NAME/g; s/${cfg.telegramUserId}/$TELEGRAM_UID/g; s/\"numCtx\": ${cfg.numCtx}/\"numCtx\": $AUTO_CTX/g" "$TOTA_HOME/tota.config.json"
 cp -f "$TOTA_HOME/tota.config.json" "$TOTA_HOME/config.json"
+
+OLLAMA_V1_URL="\${OLLAMA_HOST:-http://127.0.0.1:11434}"
+OLLAMA_V1_URL="\${OLLAMA_V1_URL%/}"
+[[ "$OLLAMA_V1_URL" != */v1 ]] && OLLAMA_V1_URL="\${OLLAMA_V1_URL}/v1"
+
+cat << EOF_YAML > "$TOTA_HOME/tota.yaml"
+identity:
+  name: Nova
+  owner: "\${OWNER_NAME}"
+  creator: Nova Blueprint
+providers:
+  default: ollamaLocal
+  ollamaLocal:
+    name: ollamaLocal
+    apiKey: ""
+    baseUrl: "\${OLLAMA_V1_URL}"
+    model: nova-qwen25
+    enabled: true
+channels:
+  telegram:
+    enabled: true
+    botToken: "\${TELEGRAM_TOKEN}"
+    webhookUrl: ""
+    allowedChatIds:
+      - \${TELEGRAM_UID}
+    streaming: true
+    admins:
+      - userId: \${TELEGRAM_UID}
+        chatId: \${TELEGRAM_UID}
+        username: "\${OWNER_NAME}"
+        approvedAt: "2026-11-26T00:00:00.000Z"
+    members: []
+    pending: []
+  api:
+    enabled: false
+    port: 3001
+    apiKey: ""
+  whatsapp:
+    enabled: false
+  ui:
+    enabled: false
+    port: 3002
+webSearch:
+  enabled: true
+  provider: auto
+  maxResults: 5
+memory:
+  shortTermMaxMessages: 20
+  secondBrain:
+    enabled: true
+    maxRecords: 50
+heartbeat:
+  intervalMinutes: 60
+tokens:
+  dailyBudget: 1000000
+capabilities:
+  computer:
+    enabled: false
+EOF_YAML
+chmod 600 "$TOTA_HOME/tota.yaml"
 
 cat << 'EOF_SQL' > "$TOTA_HOME/memory/migrate-plugged-db.sql"
 ${buildMigrationSql(cfg)}

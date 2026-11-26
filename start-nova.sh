@@ -42,6 +42,71 @@ else
 fi
 
 [ -f "${TOTA_HOME}/tota.config.json" ] && cp -f "${TOTA_HOME}/tota.config.json" "${TOTA_HOME}/config.json"
+[ -f "${TOTA_HOME}/soul/SOUL.md" ] && cp -f "${TOTA_HOME}/soul/SOUL.md" "${TOTA_HOME}/soul/soul.md"
+
+if [ ! -f "${TOTA_HOME}/tota.yaml" ] || ! grep -q "botToken:" "${TOTA_HOME}/tota.yaml" 2>/dev/null; then
+  OWNER_VAL="${OWNER_NAME:-Cristian}"
+  OLLAMA_V1_URL="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+  OLLAMA_V1_URL="${OLLAMA_V1_URL%/}"
+  [[ "$OLLAMA_V1_URL" != */v1 ]] && OLLAMA_V1_URL="${OLLAMA_V1_URL}/v1"
+
+  cat << EOF_YAML > "${TOTA_HOME}/tota.yaml"
+identity:
+  name: Nova
+  owner: "${OWNER_VAL}"
+  creator: Nova Blueprint
+providers:
+  default: ollamaLocal
+  ollamaLocal:
+    name: ollamaLocal
+    apiKey: ""
+    baseUrl: "${OLLAMA_V1_URL}"
+    model: nova-qwen25
+    enabled: true
+channels:
+  telegram:
+    enabled: true
+    botToken: "${TELEGRAM_BOT_TOKEN}"
+    webhookUrl: ""
+    allowedChatIds:
+      - ${TELEGRAM_ALLOWED_USER_ID}
+    streaming: true
+    admins:
+      - userId: ${TELEGRAM_ALLOWED_USER_ID}
+        chatId: ${TELEGRAM_ALLOWED_USER_ID}
+        username: "${OWNER_VAL}"
+        approvedAt: "2026-11-26T00:00:00.000Z"
+    members: []
+    pending: []
+  api:
+    enabled: false
+    port: 3001
+    apiKey: ""
+  whatsapp:
+    enabled: false
+  ui:
+    enabled: false
+    port: 3002
+webSearch:
+  enabled: true
+  provider: auto
+  maxResults: 5
+memory:
+  shortTermMaxMessages: 20
+  secondBrain:
+    enabled: true
+    maxRecords: 50
+heartbeat:
+  intervalMinutes: 60
+tokens:
+  dailyBudget: 1000000
+capabilities:
+  computer:
+    enabled: false
+EOF_YAML
+  chmod 600 "${TOTA_HOME}/tota.yaml"
+  echo "[Nova] tota.yaml generado para Telegram + Ollama (nova-qwen25)."
+fi
 
 if ! command -v tota >/dev/null 2>&1 || [ ! -f "${TOTA_HOME}/runtime/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
   echo "[Nova] Instalando/reparando tota-agent y binarios SQLite en ${TOTA_HOME}/runtime..."
@@ -107,10 +172,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 while true; do
-  echo "[Nova] Arrancando tota-agent (Telegram + Playwright)..."
+  echo "[Nova] Arrancando tota-agent (Telegram + Ollama + Playwright)..."
   set +e
   if tota --help 2>/dev/null | grep -qw "start"; then
-    tota start < /dev/null 2>&1 | tee -a "${TOTA_HOME}/logs/nova-agent.log"
+    tota start --daemon --verbose < /dev/null 2>&1 | tee -a "${TOTA_HOME}/logs/nova-agent.log"
   else
     tota up --config "${TOTA_HOME}/tota.config.json" < /dev/null 2>&1 | tee -a "${TOTA_HOME}/logs/nova-agent.log"
   fi

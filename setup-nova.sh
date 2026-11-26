@@ -222,6 +222,13 @@ Usa la memoria persistente local en \`$TOTA_HOME/memory\` para recordar preferen
 - **Lectura y análisis de archivos**: Restringido a \`$ROOT/nova-workspace\`.
 - **Linux (Modo Seguro)**: Lectura libre en lista blanca (\`df -h\`, \`free -m\`, \`uptime\`, \`ps aux\`, \`ls\`, \`cat\`, \`head\`, \`tail\`, \`grep\`, \`ollama list\`, \`ollama ps\`). Pide confirmación explícita en Telegram antes de escribir, borrar o reiniciar procesos.
 EOF_SOUL
+cp -f "$TOTA_HOME/soul/SOUL.md" "$TOTA_HOME/soul/soul.md"
+cat << EOF_PERSONA > "$TOTA_HOME/soul/persona.md"
+# Persona de ${OWNER_NAME} y estilo de Nova
+- Usuario autorizado: ${OWNER_NAME} (Telegram ID ${TELEGRAM_UID}).
+- Idioma: Español natural, tuteo cercano, humor ligero, nada corporativo.
+- Intereses clave: Tecnología, IA, PS4, Android, hardware, redes y automatización.
+EOF_PERSONA
 
 cat << EOF_MODEL > "$TOTA_HOME/Modelfile.nova"
 FROM qwen2.5:7b
@@ -320,6 +327,66 @@ cat << EOF_CFG > "$TOTA_HOME/tota.config.json"
 }
 EOF_CFG
 cp -f "$TOTA_HOME/tota.config.json" "$TOTA_HOME/config.json"
+
+OLLAMA_V1_URL="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+OLLAMA_V1_URL="${OLLAMA_V1_URL%/}"
+[[ "$OLLAMA_V1_URL" != */v1 ]] && OLLAMA_V1_URL="${OLLAMA_V1_URL}/v1"
+
+cat << EOF_YAML > "$TOTA_HOME/tota.yaml"
+identity:
+  name: Nova
+  owner: "${OWNER_NAME}"
+  creator: Nova Blueprint
+providers:
+  default: ollamaLocal
+  ollamaLocal:
+    name: ollamaLocal
+    apiKey: ""
+    baseUrl: "${OLLAMA_V1_URL}"
+    model: nova-qwen25
+    enabled: true
+channels:
+  telegram:
+    enabled: true
+    botToken: "${TELEGRAM_TOKEN}"
+    webhookUrl: ""
+    allowedChatIds:
+      - ${TELEGRAM_UID}
+    streaming: true
+    admins:
+      - userId: ${TELEGRAM_UID}
+        chatId: ${TELEGRAM_UID}
+        username: "${OWNER_NAME}"
+        approvedAt: "2026-11-26T00:00:00.000Z"
+    members: []
+    pending: []
+  api:
+    enabled: false
+    port: 3001
+    apiKey: ""
+  whatsapp:
+    enabled: false
+  ui:
+    enabled: false
+    port: 3002
+webSearch:
+  enabled: true
+  provider: auto
+  maxResults: 5
+memory:
+  shortTermMaxMessages: 20
+  secondBrain:
+    enabled: true
+    maxRecords: 50
+heartbeat:
+  intervalMinutes: 60
+tokens:
+  dailyBudget: 1000000
+capabilities:
+  computer:
+    enabled: false
+EOF_YAML
+chmod 600 "$TOTA_HOME/tota.yaml"
 
 echo "[3/5] Verificando e instalando Ollama..."
 if ! command -v ollama >/dev/null 2>&1; then
