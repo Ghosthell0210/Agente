@@ -783,14 +783,33 @@ case "$RAW_ARCH" in
 esac
 
 if [ -r /proc/meminfo ]; then
-  TOTAL_RAM_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
+  HOST_RAM_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
 else
-  TOTAL_RAM_MB=8192
+  HOST_RAM_MB=8192
+fi
+
+CGROUP_RAM_MB="$HOST_RAM_MB"
+if [ -r /sys/fs/cgroup/memory.max ]; then
+  CG_MAX="$(cat /sys/fs/cgroup/memory.max)"
+  if [[ "$CG_MAX" =~ ^[0-9]+$ ]] && [ "$CG_MAX" -gt 0 ]; then
+    CGROUP_RAM_MB=$((CG_MAX / 1024 / 1024))
+  fi
+elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+  CG_MAX="$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)"
+  if [[ "$CG_MAX" =~ ^[0-9]+$ ]] && [ "$CG_MAX" -lt 9000000000000000 ]; then
+    CGROUP_RAM_MB=$((CG_MAX / 1024 / 1024))
+  fi
+fi
+
+if [ "$CGROUP_RAM_MB" -lt "$HOST_RAM_MB" ]; then
+  TOTAL_RAM_MB="$CGROUP_RAM_MB"
+else
+  TOTAL_RAM_MB="$HOST_RAM_MB"
 fi
 
 if [ "$TOTAL_RAM_MB" -le 9500 ]; then
   AUTO_CTX=4096
-elif [ "$TOTAL_RAM_MB" -le 14500 ]; then
+elif [ "$TOTAL_RAM_MB" -le 17500 ]; then
   AUTO_CTX=8192
 else
   AUTO_CTX=16384
@@ -816,12 +835,14 @@ if [ "$FREE_DISK_MB" -lt 8500 ]; then
   echo ""
 fi
 
-# 2. Preguntas interactivas en consola
-read -r -p "1) Tu nombre o apodo [${cfg.ownerName}]: " INPUT_OWNER
+# 2. Preguntas interactivas en consola (echo con salto de linea para consolas Pterodactyl/Calagopus)
+echo "1) Tu nombre o apodo [${cfg.ownerName}]:"
+read -r INPUT_OWNER
 OWNER_NAME="\${INPUT_OWNER:-${cfg.ownerName}}"
 
 while true; do
-  read -r -p "2) Token de tu bot (@BotFather): " INPUT_TOKEN
+  echo "2) Token de tu bot (@BotFather):"
+  read -r INPUT_TOKEN
   if [[ "$INPUT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{20,}$ ]]; then
     TELEGRAM_TOKEN="$INPUT_TOKEN"
     break
@@ -830,7 +851,8 @@ while true; do
 done
 
 while true; do
-  read -r -p "3) Tu Telegram User ID numerico (@userinfobot) [${cfg.telegramUserId}]: " INPUT_UID
+  echo "3) Tu Telegram User ID numerico (@userinfobot) [${cfg.telegramUserId}]:"
+  read -r INPUT_UID
   TELEGRAM_UID="\${INPUT_UID:-${cfg.telegramUserId}}"
   if [[ "$TELEGRAM_UID" =~ ^[0-9]+$ ]]; then
     break
@@ -838,7 +860,8 @@ while true; do
   echo "   El User ID debe contener solo numeros."
 done
 
-read -r -p "4) ¿Configurar credenciales de BD Plugged Host ahora? (s/N) [N]: " INPUT_DB
+echo "4) ¿Configurar credenciales de BD Plugged Host ahora? (s/N) [N]:"
+read -r INPUT_DB
 SETUP_DB="\${INPUT_DB:-N}"
 
 DB_HOST="127.0.0.1"
@@ -848,11 +871,11 @@ DB_USER="u_plugged_nova"
 DB_PASS="CAMBIAR_CONTRASENA_SEGURA"
 
 if [[ "$SETUP_DB" =~ ^[sSyY]$ ]]; then
-  read -r -p "   Host BD [127.0.0.1]: " IN_H; DB_HOST="\${IN_H:-127.0.0.1}"
-  read -r -p "   Puerto BD [$DB_PORT]: " IN_P; DB_PORT="\${IN_P:-$DB_PORT}"
-  read -r -p "   Nombre BD [nova_memory]: " IN_N; DB_NAME="\${IN_N:-nova_memory}"
-  read -r -p "   Usuario BD [u_plugged_nova]: " IN_U; DB_USER="\${IN_U:-u_plugged_nova}"
-  read -r -s -p "   Password BD: " IN_PW; echo ""; DB_PASS="\${IN_PW:-$DB_PASS}"
+  echo "   Host BD [127.0.0.1]:"; read -r IN_H; DB_HOST="\${IN_H:-127.0.0.1}"
+  echo "   Puerto BD [$DB_PORT]:"; read -r IN_P; DB_PORT="\${IN_P:-$DB_PORT}"
+  echo "   Nombre BD [nova_memory]:"; read -r IN_N; DB_NAME="\${IN_N:-nova_memory}"
+  echo "   Usuario BD [u_plugged_nova]:"; read -r IN_U; DB_USER="\${IN_U:-u_plugged_nova}"
+  echo "   Password BD:"; read -r -s IN_PW; echo ""; DB_PASS="\${IN_PW:-$DB_PASS}"
 fi
 
 echo ""
@@ -885,13 +908,15 @@ PLUGGED_DB_PASSWORD="$DB_PASS"
 EOF_ENV
 chmod 600 "$ROOT/.env"
 
-cat << 'EOF_GIT' > "$ROOT/.gitignore"
+if [ ! -d "$ROOT/.git" ]; then
+  cat << 'EOF_GIT' > "$ROOT/.gitignore"
 ${buildRepoGitignore()}
 EOF_GIT
 
-cat << 'EOF_PKG' > "$ROOT/package.json"
+  cat << 'EOF_PKG' > "$ROOT/package.json"
 ${buildRepoPackageJson(cfg)}
 EOF_PKG
+fi
 
 cat << 'EOF_SOUL' > "$TOTA_HOME/soul/SOUL.md"
 ${buildSoulMarkdown(cfg)}
@@ -930,12 +955,22 @@ if ! command -v ollama >/dev/null 2>&1; then
     curl -fsSL https://ollama.com/install.sh | sh || true
   fi
   if ! command -v ollama >/dev/null 2>&1; then
-    echo "   Descargando binario portable de Ollama en $ROOT/ollama..."
-    if curl -fL "https://ollama.com/download/ollama-linux-\${ARCH}.tgz" -o /tmp/ollama.tgz; then
-      tar -xzf /tmp/ollama.tgz -C "$ROOT/ollama"
-      rm -f /tmp/ollama.tgz
-    elif curl -fL "https://ollama.com/download/ollama-linux-\${ARCH}.tar.zst" -o /tmp/ollama.tar.zst; then
-      tar --zstd -xf /tmp/ollama.tar.zst -C "$ROOT/ollama" || true
+    echo "   Descargando binario portable de Ollama en $ROOT/ollama (puede tardar 1-2 min)..."
+    if curl -fL --progress-bar "https://ollama.com/download/ollama-linux-\${ARCH}.tar.zst" -o /tmp/ollama.tar.zst; then
+      if command -v zstd >/dev/null 2>&1; then
+        tar --zstd -xf /tmp/ollama.tar.zst -C "$ROOT/ollama"
+      else
+        echo "   zstd no encontrado en el sistema; usando descompresor JS temporal..."
+        npm install --prefix /tmp/zstd-helper --no-save fzstd >/dev/null 2>&1
+        NODE_PATH=/tmp/zstd-helper/node_modules node --input-type=commonjs -e '
+          const fs = require("node:fs");
+          const { decompress } = require("fzstd");
+          const data = fs.readFileSync("/tmp/ollama.tar.zst");
+          fs.writeFileSync("/tmp/ollama.tar", Buffer.from(decompress(data)));
+        '
+        tar -xf /tmp/ollama.tar -C "$ROOT/ollama"
+        rm -rf /tmp/ollama.tar /tmp/zstd-helper
+      fi
       rm -f /tmp/ollama.tar.zst
     fi
   fi
@@ -988,7 +1023,8 @@ echo "  Contexto  : num_ctx=$AUTO_CTX"
 echo "  Telegram  : bloqueado al ID $TELEGRAM_UID"
 echo "=================================================="
 echo ""
-read -r -p "¿Arrancar Nova 24/7 ahora mismo? (S/n) [S]: " RUN_NOW
+echo "¿Arrancar Nova 24/7 ahora mismo? (S/n) [S]:"
+read -r RUN_NOW
 if [[ ! "\${RUN_NOW:-S}" =~ ^[nN]$ ]]; then
   exec bash "$ROOT/start-nova.sh"
 else
