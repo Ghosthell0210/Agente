@@ -355,6 +355,7 @@ export function buildRepoPackageJson(cfg: NovaDeployConfig): string {
       name: 'nova-tota-agent',
       version: '1.0.0',
       private: true,
+      type: 'module',
       main: 'index.js',
       description: `Asistente personal Nova (${cfg.ownerName}) sobre tota-agent + Ollama ${cfg.ollamaModel} + Playwright en Telegram`,
       scripts: {
@@ -373,9 +374,13 @@ export function buildRepoPackageJson(cfg: NovaDeployConfig): string {
 
 export function buildRepoIndexJs(cfg: NovaDeployConfig): string {
   return `// Punto de entrada para Plugged Host (Calagopus Daemon / MAIN_FILE=index.js)
-const fs = require('node:fs');
-const path = require('node:path');
-const { spawn, spawnSync } = require('node:child_process');
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const rootDir = __dirname;
 const envPath = path.join(rootDir, '.env');

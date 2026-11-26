@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+.tota/
+ollama/
+pw-browsers/
+nova-workspace/
